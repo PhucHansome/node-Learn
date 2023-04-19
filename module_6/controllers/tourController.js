@@ -1,60 +1,83 @@
 const Tour = require('./../models/tourModel');
 
-exports.getAllTours = async (req, res) => {
-  try {
-    //BUILD QUERY
-    //1B)    FILTERING
-    const queryObj = { ...req.query };
-    const excludededFields = ['page', 'sort', 'limit', 'fields'];
-    excludededFields.forEach((el) => delete queryObj[el]);
+exports.aliasTopTours = (req, res, next) => {
+  req.query.limit = '5';
+  req.query.sort = '-ratingsAverage,price';
+  req.query.fields = 'name,price,ratingsAverage,summary,difficulty';
+  next();
+};
 
-    //1A) advanced filtering
+class APiFeatures {
+  constructor(query, queryString) {
+    this.query = query;
+    this.queryString = queryString;
+  }
+  filter() {
+    console.log('11');
+
+    const queryObj = { ...this.queryString };
+    const excludedFields = ['page', 'sort', 'limit', 'fields'];
+    excludedFields.forEach((el) => delete queryObj[el]);
     let queryStr = JSON.stringify(queryObj);
     // \b đối sánh những từ chính xác \g nhiều lần
     queryStr = queryStr.replace(/\b(gte|gt|lte|lt)\b/g, (match) => `$${match}`);
-    console.log(JSON.parse(queryStr));
-    let query = Tour.find(JSON.parse(queryStr));
+    this.query.find(JSON.parse(queryStr));
+    // let query = Tour.find(JSON.parse(queryStr));
+    console.log('11');
 
-    //2)Sorting
+    return this;
+  }
+  sort() {
+    console.log('12');
 
-    if (req.query.sort) {
-      const sortBy = req.query.sort.split(',').join(' ');
+    if (this.queryString.sort) {
+      const sortBy = this.queryString.sort.split(',').join(' ');
       console.log(sortBy);
-      query = query.sort(sortBy);
+      this.query = this.query.sort(sortBy);
     } else {
-      query = query.sort('-createdAt');
+      this.query = this.query.sort('-createdAt');
     }
+    console.log('12');
 
-    //3) Field limiting
-    if (req.query.fields) {
-      const fields = req.query.fields.split(',').join('');
-      query = query.select(fields);
+    return this;
+  }
+  limitFields() {
+    console.log('13');
+    if (this.queryString.fields) {
+      const fields = this.queryString.fields.split(',').join('');
+      this.query = this.query.select(fields);
     } else {
-      query = query.select('-__v');
+      this.query = this.query.select('-__v');
     }
+    console.log('13');
 
-    //4)Pagination
-    const page = req.query.page * 1 || 1;
-    const limit = req.query.limit * 1 || 100;
+    return this;
+  }
+  paginate() {
+    console.log('14');
+
+    const page = this.queryString.page * 1 || 1;
+    const limit = this.queryString.limit * 1 || 100;
     const skip = (page - 1) * limit;
 
-    query = query.skip(skip).limit(limit);
+    this.query = this.query.skip(skip).limit(limit);
+    console.log('14');
+    return this;
+  }
+}
 
-    if (req.query.page) {
-      const numTours = await Tour.countDocuments();
-      if (skip > numTours) {
-        throw new Error('this page does not exist');
-      }
-    }
-
-    // const tours = await Tour.find()
-    //   .where('duration')
-    //   .equals(5)
-    //   .where('difficulty')
-    //   .equals('easy');
-
+exports.getAllTours = async (req, res) => {
+  try {
     //excute query
-    const tours = await query;
+    console.log('1');
+    const features = new APiFeatures(Tour.find(), req.query)
+      .filter()
+      .sort()
+      .limitFields()
+      .paginate();
+    console.log('1');
+
+    const tours = await features.query;
 
     //rend response
     res.status(200).json({
@@ -140,6 +163,46 @@ exports.deleteTour = (req, res) => {
     res.status(204).json({
       status: 'success',
       data: null,
+    });
+  } catch (err) {
+    res.status(400).json({
+      status: 'false',
+      message: err,
+    });
+  }
+};
+
+exports.getTourStats = async (req, res) => {
+  try {
+    console.log(1);
+
+    const stats = await Tour.aggregate([
+      {
+        $match: { ratingsAverage: { $gte: 4.5 } },
+      },
+      {
+        $group: {
+          _id: { $toUpper: '$difficulty' },
+          numTours: { $sum: 1 },
+          avgRating: { $avg: '$ratingsAverage' },
+          avgPrice: { $avg: '$price' },
+          minPrice: { $min: '$price' },
+          maxPrice: { $max: '$price' },
+        },
+      },
+      {
+        $sort: { avgPrice: 1 },
+      },
+      {
+        $match: { _id: { $ne: 'EASY' } },
+      },
+    ]);
+    console.log(1);
+    res.status(200).json({
+      status: 'success',
+      data: {
+        stats,
+      },
     });
   } catch (err) {
     res.status(400).json({
